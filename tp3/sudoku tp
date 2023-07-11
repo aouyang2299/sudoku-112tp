@@ -1,0 +1,848 @@
+from cmu_graphics import *
+import copy
+import os
+import random
+import string
+import math
+import time
+
+'''
+Extra Features:
+- Undo and Redo
+- Autoplay Singletons
+- New York Times Num Pad with numbers graying out when there are 9 of each number
+'''
+class State:
+
+    def __init__(self, board):
+        self.rows, self.cols = 9, 9
+        self.level = None
+        self.sudokuBoard = board # stores original str
+        self.sudokuList = [] # should store board values in 2d list
+        self.legals = State.createDefaultLegals(self)
+        self.boardCopy = None
+        self.solLegals = None
+        self.solutionBoard = None
+        self.singletons = []
+
+
+    def initialLegals(self): # make default cells empty sets
+        for row in range(self.rows):
+            for col in range(self.cols):
+                val = self.sudokuList[row][col]
+                if val != 0:
+                    self.legals[row][col] = set()              
+
+    @staticmethod
+    def createDefaultLegals(self):
+        lst = []
+        for i in range(self.rows):
+            sec = []
+            for j in range(self.cols):
+                sec.append({1,2,3,4,5,6,7,8,9})
+            lst.append(sec)
+        return lst
+
+    def set(self, row, col, value): # set the values in the list
+        self.sudokuList[row][col] = value 
+        # once a val is placed
+        # it must be removed from the legals of the block, row, and col
+    
+    def ban(self, row, col, value): # remove value from rows and cols and block
+        for r in range(self.rows):
+            for c in range(self.cols):
+                if (r == row or c == col) and value in self.legals[r][c]:
+                    self.legals[r][c].remove(value)
+        lst = State.getBlockRegionByCell(row, col)
+        for r, c in lst:
+            if value in self.legals[r][c]:
+                self.legals[r][c].remove(value)
+
+    def unban(self, row, col, value):
+        self.sudokuList[row][col] = 0
+        localSudoku = copy.deepcopy(self.sudokuList)
+
+        for r in range(self.rows):
+            for c in range(self.cols):
+
+                if (r == row or c == col):
+                    localSudoku[r][c] = value
+                    block = State.getBlock(r, c)
+                    if (State.isLegalRow(localSudoku, r) and 
+                        State.isLegalCol(localSudoku, c) and 
+                        State.isLegalBlock(localSudoku, block) and
+                        self.sudokuList[r][c] == 0):
+                        self.legals[r][c].add(value)
+                    localSudoku[r][c] = 0
+                    
+        b = State.getBlockRegionByCell(row, col)
+        for r, c in b:
+            localSudoku[r][c] = value
+            block = State.getBlock(r, c)
+            if (State.isLegalRow(localSudoku, r) and 
+                State.isLegalCol(localSudoku, c) and 
+                State.isLegalBlock(localSudoku, block)
+                and self.sudokuList[r][c] == 0):
+                self.legals[r][c].add(value)
+            else:
+                if value in self.legals[r][c]:
+                    self.legals[r][c].remove(value)
+            localSudoku[r][c] = 0
+
+    def convertBoardToList(self): 
+        list = []
+        strSplit = self.sudokuBoard.splitlines() # 9 rows
+        for i in range(len(strSplit)):
+            secSplit = strSplit[i].split(' ')
+            secSplit[i] = int(secSplit[i])
+            list.append(secSplit)
+        for i in range(len(list)):
+            for j in range(len(list[0])):
+                list[i][j] = int(list[i][j])
+        self.sudokuList = list
+
+    def printSol(self):
+        return self.solutionBoard
+
+    # backtracking
+
+    def fullBoard(self):
+        for r in range(self.rows):
+            for c in range(self.cols):
+                if self.sudokuList[r][c] == 0:
+                    return False
+        return True
+    
+    def solve(self):
+        # referenced the mini sudoku
+        # https://cs3-112-f22.academy.cs.cmu.edu/exercise/4823
+        
+        row, col = self.nextSmallLegal('solve')
+
+        if self.fullBoard() and (row, col) == (None, None):
+            self.solutionBoard = self.sudokuList
+            # print('solution', self.solutionBoard)
+            return('done')
+
+        else:
+            if (row, col) != (None, None):
+                localLegals = copy.deepcopy(self.legals[row][col])
+
+                if localLegals == set():
+                    return None
+                
+                for i in localLegals:
+                    self.sudokuList[row][col] = i
+                    self.ban(row, col, self.sudokuList[row][col])
+
+                    for r in range(self.rows):
+                        for c in range(self.cols):                                  
+                            if (self.legals[r][c] == set() and 
+                                self.sudokuList[r][c] == 0):
+                                self.unban(row, col, i)
+                                return None
+                            
+                    self.legals[row][col] = set()
+            
+                    # print("board", self.sudokuList)
+                    sol = self.solve() 
+
+                    if sol != None:
+                        return('smth') 
+                    
+                    self.legals[row][col] = localLegals  
+                    self.unban(row, col, i)   
+
+                return None
+
+    def nextSmallLegal(self, mode): 
+        bestLegalLen = None
+        bestPair = None, None
+        rows, cols = len(self.sudokuList), len(self.sudokuList[0])
+
+        if mode == 'solve':
+            for row in range(rows):
+                for col in range(cols):
+                    if (len(self.legals[row][col]) > 0 and 
+                       self.sudokuList[row][col] == 0): 
+                        if (bestLegalLen == None or 
+                            len(self.legals[row][col]) < bestLegalLen):
+                            bestPair = row, col
+                            bestLegalLen = len(self.legals[row][col])
+
+        if mode == 'singleton':
+            for row in range(rows):
+                for col in range(cols):
+                    if (len(self.legals[row][col]) == 1 and 
+                        (row, col) not in self.singletons):
+                        self.singletons.append((row, col))
+
+        if bestLegalLen == 0:
+            return (None, None)
+
+        return bestPair   
+
+    @staticmethod
+    def areLegalValue(L):
+        # https://cs3-112-f22.academy.cs.cmu.edu/exercise/4745 
+        # values must be 0 to len
+        n = len(L) 
+        seen = []
+        for value in L:
+            # value is an int
+            if type(value) != int:
+                return False 
+            # value is in range
+            if value < 0 or value > n + 1:
+                return False
+            # value is not dupe
+            if value != 0 and value in seen:
+                return False
+            # value is legal
+            seen.append(value)
+        return True
+    
+    @staticmethod
+    def isLegalRow(lst, row):
+        # https://cs3-112-f22.academy.cs.cmu.edu/exercise/4745
+        return State.areLegalValue(lst[row])
+    
+    @staticmethod
+    def isLegalCol(lst, col):
+        # https://cs3-112-f22.academy.cs.cmu.edu/exercise/4745
+        rows = len(lst)
+        values = [lst[row][col] for row in range(rows)]
+        return State.areLegalValue(values)
+
+    @staticmethod
+    def isLegalBlock(lst, block):
+        # https://cs3-112-f22.academy.cs.cmu.edu/exercise/4745
+        n = len(lst)
+        blockSize = rounded(n**0.5)
+        startRow = block // blockSize * blockSize
+        startCol = block % blockSize * blockSize
+        values = []
+        for drow in range(blockSize):
+            for dcol in range(blockSize):
+                row, col = startRow + drow, startCol + dcol
+                values.append(lst[row][col])
+        return State.areLegalValue(values)        
+
+    @staticmethod
+    def getRowRegion(row): # get 9 tups w chosen row
+        lst = []
+        for r in range(9):
+            for c in range(9):
+                if r == row:
+                    lst.append((r, c))
+        return lst
+
+    @staticmethod
+    def getColRegion(col): # get 9 tups w chosen col
+        lst = []
+        for r in range(9):
+            for c in range(9):
+                if c == col:
+                    lst.append((r, c))
+        return lst
+
+    @staticmethod
+    def getBlockRegion(block): # get 9 tuples within block
+        lst = []
+        largeR, largeC = block//3, block%3
+        topLeftR, topLeftC = 3 * largeR, 3 * largeC
+        for i in range(3):
+            for j in range(3):
+                lst.append((topLeftR + i, topLeftC + j))
+
+    @staticmethod
+    def getBlock(row, col): # return block number
+        largeR, largeC = row//3, col//3
+        block = largeR * 3 + largeC
+        return block
+
+    @staticmethod
+    def getBlockRegionByCell(row, col):
+        lst = []
+        largeR, largeC = row//3, col//3
+        topLeftR, topLeftC = 3 * largeR, 3 * largeC
+        for i in range(3):
+            for j in range(3):
+                lst.append((topLeftR + i, topLeftC + j))
+        #print(lst)
+        return lst
+
+    @staticmethod  
+    def getCellRegions(row, col): # get all regions from blocks, cols, and rows
+        return (State.getBlockRegionByCell(row, col) + 
+            State.getColRegion(col) + State.getRowRegion(row))
+
+    @staticmethod  
+    def getAllRegions(self): # all regions
+        lst = []
+        for r in range(self.rows):
+            for c in range(self.cols):
+                lst.append(State.getCellRegions(self, r, c))
+        return list(set(lst))
+
+    @staticmethod  
+    def getAllRegionsThatContainTargets(self, targets): # target == legal
+        lst = []
+        for r in range(self.rows):
+            for c in range(self.cols):
+                if targets == self.legals[r][c]:
+                    lst.append((r,c))
+        allRegions = []
+        for r, c in lst:
+            allRegions.append(State.getCellRegions(self, r, c))
+        return list(set(allRegions))
+
+
+def readFile(path): 
+    # https://www.cs.cmu.edu/~112-3/notes/term-project.html
+    with open(path, "rt") as f:
+        return f.read()
+        
+
+###########
+### APP ### 
+###########
+
+def onAppStart(app): # state class should replace this
+    app.selected = False
+    app.clicked = False
+    #app.wrong = False
+    app.redDot = True
+    app.gameOver = False
+    app.level = None
+    app.row = None
+    app.col = None
+    # adapted from cs academy 5.3.2 Drawing a 2d Board 
+    # https://cs3-112-f22.academy.cs.cmu.edu/notes/4187 
+    app.rows = 9
+    app.cols = 9
+    app.boardLeft = app.width/2 - 250 
+    app.boardTop = app.height/2 - 250 
+    app.boardWidth = 500
+    app.boardHeight = 500
+    app.board = [([None] * app.cols) for row in range(app.rows)] # draw Board
+    # code redundancy since I could just use app.sudoku??
+    app.userBoard = [([None] * app.cols) for row in range(app.rows)]
+    app.cellBorderWidth = 2
+    app.gameOver = False
+    app.incorrect = []
+    app.hint1 = False
+    app.hint2 = False
+    app.singletons = []
+    app.smallRow, app.smallCol = None, None
+    app.singletonMsg = False
+    app.singletonLeft = False
+    app.moves = []
+    app.redos = []
+    app.noUndo = False
+    app.noRedo = False
+    app.complete = False
+
+#################
+# SPLASH SCREEN #
+#################
+
+def splash_onKeyPress(app, key):
+    if key == 'i': setActiveScreen('instructions')
+
+def splash_redrawAll(app):
+    drawRect(0, 0, app.width, app.height, fill = 'white')
+
+    drawLabel('sudoku', app.width/2, 150, size=175, bold=True, 
+              fill='lightSteelBlue')
+    drawLabel('Choose your level of Sudoku!!', app.width/2, app.height/2 - 100, 
+              size=25, fill='skyblue', bold=True)
+    drawLabel('press i for instructions!', app.width/2, app.height/2 - 30, 
+              size=25, fill='cornflowerBlue', bold=True)
+
+    drawRect(app.width/2 - 300, app.height/2 + 25, 100, 50, fill='green')
+    drawLabel('easy', app.width/2 - 250, app.height/2 + 50, size = 25, 
+              fill='white', bold=True)
+    
+    drawRect(app.width/2 - 175, app.height/2 + 25, 100, 50, fill='greenYellow')
+    drawLabel('medium', app.width/2 - 125, app.height/2 + 50, size = 25, 
+              fill='white', bold=True)
+    
+    drawRect(app.width/2 - 50, app.height/2 + 25, 100, 50, fill='gold')
+    drawLabel('hard', app.width/2, app.height/2 + 50, size = 25, 
+              fill='white', bold=True)
+    
+    drawRect(app.width/2 + 75, app.height/2 + 25, 100, 50, fill='red')
+    drawLabel('expert', app.width/2 + 125, app.height/2 + 50, size = 25, 
+              fill='white', bold=True)
+    
+    drawRect(app.width/2 + 200, app.height/2 + 25, 100, 50, fill='darkRed')
+    drawLabel('evil', app.width/2 + 250, app.height/2 + 50, size = 25, 
+              fill='white', bold=True)
+
+def pickRandBoard(app): # loads boards, filters, and picks rand board
+    # referenced loadBoardPaths(filters)
+    # https://www.cs.cmu.edu/~112-3/notes/tp-sudoku-hints.html 
+
+    list = []
+    for filename in os.listdir('C:\\Users\\andy\\Downloads\\cmu_graphics' + 
+                               '_installer\\tp-starter-files\\boards'):
+        if filename.endswith('.txt') and app.level in filename:
+            list.append(filename)
+    pick = random.choice(list) # which one it picks
+    # print(pick)
+    pathToFile = f'C:\\Users\\andy\\Downloads\\cmu_graphics_installer\\tp-starter-files\\boards\\{pick}'
+    board = readFile(pathToFile)
+    return board # board str
+
+def splash_onMousePress(app, mouseX, mouseY):
+    if app.level == None:
+        if (app.width/2 - 300 <= mouseX <= app.width/2 - 200 and 
+           app.height/2 + 25 <= mouseY <= app.height/2 + 75):
+            app.level = 'easy'
+        if (app.width/2 - 175 <= mouseX <= app.width/2 - 75 and 
+            app.height/2 + 25 <= mouseY <= app.height/2 + 75):
+            app.level = 'medium'
+        if (app.width/2 - 50 <= mouseX <= app.width/2 + 50 and 
+            app.height/2 + 25 <= mouseY <= app.height/2 + 75):
+            app.level = 'hard'
+        if (app.width/2 + 75 <= mouseX <= app.width/2 + 175 and 
+            app.height/2 + 25 <= mouseY <= app.height/2 + 75):
+            app.level = 'expert'
+        if (app.width/2 + 200 <= mouseX <= app.width/2 + 300 and 
+            app.height/2 + 25 <= mouseY <= app.height/2 + 75):
+            app.level = 'evil'
+        if app.level != None:
+            board = pickRandBoard(app)
+            app.sudoku = State(board)
+            app.sudoku.level = app.level
+            app.selected = True
+            app.sudoku.convertBoardToList() # converted to a 2d list 
+            app.sudoku.initialLegals() # initial legals are set
+            
+            for r in range(app.rows):
+                for c in range(app.cols):
+                    if app.sudoku.sudokuList[r][c] != 0:
+                        app.sudoku.ban(r, c, app.sudoku.sudokuList[r][c])
+
+            app.sudoku.boardCopy = copy.deepcopy(app.sudoku.sudokuList)
+            app.sudoku.solLegals = copy.deepcopy(app.sudoku.legals)
+            
+            app.sudoku.solve()
+            
+            app.sudoku.sudokuList = app.sudoku.boardCopy
+            app.sudoku.legals = app.sudoku.solLegals
+            
+            setActiveScreen('play')
+
+
+################
+# PLAY SCREEEN # 
+################
+
+def play_onKeyPress(app, key):
+    if key == 'i': setActiveScreen('instructions')
+
+    if (key.isdigit() and app.clicked == True and app.row != None and 
+        app.col != None and key != 0 and 
+        int(key) == app.sudoku.solutionBoard[app.row][app.col]): 
+
+        app.complete = False
+        app.singletonMsg = False
+        app.singletonLeft = False
+        app.noUndo = False
+        app.noRedo = False
+        app.sudoku.set(app.row, app.col, int(key))
+        app.userBoard[app.row][app.col] = int(key)
+        app.sudoku.ban(app.row, app.col, int(key))
+        app.sudoku.legals[app.row][app.col] = set()
+        if (app.row, app.col, int(key), 'true') not in app.moves:
+            app.moves.append((app.row, app.col, int(key), 'true'))
+        if (app.row, app.col) in app.incorrect:
+            app.incorrect.remove((app.row, app.col))
+        if (app.row, app.col) in app.singletons:
+            app.sudoku.singletons.remove((app.row, app.col))
+            app.singletons.remove((app.row, app.col))
+
+    if (key.isdigit() and app.clicked == True and app.row != None and 
+        app.col != None and key != 0 and
+        (app.userBoard[app.row][app.col] == 
+        app.sudoku.solutionBoard[app.row][app.col])):
+        return
+    
+    if (key.isdigit() and app.clicked == True and app.row != None and 
+        app.col != None and key != 0 and 
+        int(key) != app.sudoku.solutionBoard[app.row][app.col]): 
+        
+        app.noUndo = False
+        app.noRedo = False
+        app.singletonMsg = False
+        app.singletonLeft = False
+        app.complete = False
+        app.userBoard[app.row][app.col] = int(key)
+        app.redDot = True
+        if (app.row, app.col) not in app.incorrect:
+            app.incorrect.append((app.row, app.col))
+        if (app.row, app.col, int(key), 'false') not in app.moves:
+            app.moves.append((app.row, app.col, int(key), 'false'))
+
+
+    if key == 'b':
+        app.selected = False
+        app.level = None
+        for r in range(app.rows):
+            for c in range(app.cols):
+                if app.userBoard[r][c] != None:
+                    app.sudoku.sudokuList[r][c] = 0
+                    app.userBoard[r][c] = None
+        app.incorrect = []
+        app.moves = []
+        app.redos = []
+        app.clicked = False
+        app.singletonMsg = False
+        app.singletonLeft = False
+        app.complete = False
+        app.noUndo = False
+        app.noRedo = False
+        setActiveScreen('splash')
+
+    if key == 'r': 
+        app.singletonLeft = False
+        app.singletonMsg = False
+        app.complete = False
+        app.noUndo = False
+        app.noRedo = False
+        if app.redos == []:
+            app.noRedo = True
+            return
+        row, col, val, truth = app.redos.pop()
+        if truth == 'true':
+            app.sudoku.ban(row, col, val)
+        if truth == 'false' and (row, col) not in app.incorrect:
+            if app.sudoku.sudokuList[row][col] != app.sudoku.solutionBoard[row][col]:
+                app.incorrect.append((row, col))
+        app.sudoku.set(row, col, val)
+        app.userBoard[row][col] = val
+        app.moves.append((row, col, val, truth))
+    
+    if key == 'u': # undo
+        app.singletonMsg = False
+        app.singletonLeft = False
+        app.complete = False
+        app.noUndo = False
+        app.noRedo = False
+        if app.moves == []:
+            app.noUndo = True
+            return
+        row, col, val, truth = app.moves.pop()
+        if truth == 'true':
+            app.sudoku.unban(row, col, val)
+        if app.sudoku.sudokuList[row][col] != app.sudoku.solutionBoard[row][col]:
+            app.sudoku.set(row, col, 0)
+            app.userBoard[row][col] = None
+            app.redos.append((row, col, val, truth))
+        if (row, col) in app.incorrect:
+            app.incorrect.remove((row, col))
+            
+
+    if key == 'h':
+        app.sudoku.nextSmallLegal('singleton')
+        app.hint1 = True
+        count = False
+        for (row, col) in app.sudoku.singletons:
+            if (row, col) not in app.singletons and count == False:
+                count = True
+                app.singletons.append((row, col))
+        if app.sudoku.singletons == []:
+            app.singletonMsg = True
+        if app.sudoku.singletons != []:
+            app.singletonLeft = True
+            if app.sudoku.singletons == app.singletons:
+                app.complete = True
+    
+    if key == 'f':
+        app.singletonLeft = False
+        app.complete = False
+        count = False
+        for (row, col) in app.singletons:
+            if count == False:
+                for single in app.sudoku.legals[row][col]:
+                    app.sudoku.set(row, col, single)
+                    app.userBoard[row][col] = single
+                    app.sudoku.singletons.remove((row, col))
+                    app.singletons.remove((row, col))
+                    count = True
+                    if (row, col) in app.incorrect:
+                        app.incorrect.remove((row, col))
+                app.sudoku.ban(row, col, single)
+        hint1 = False
+
+    if key == 's':
+        app.singletonLeft = False
+        app.complete = False
+        for (row, col) in app.singletons:
+            for single in app.sudoku.legals[row][col]:
+                app.sudoku.set(row, col, single)
+                app.userBoard[row][col] = single
+                if (row, col) in app.incorrect:
+                    app.incorrect.remove((row, col))
+            app.sudoku.ban(row, col, single)
+        app.sudoku.singletons = []
+        app.singletons = []
+        hint1 = False
+
+
+def play_redrawAll(app): # 9 3x3 boards
+    drawRect(0, 0, app.width, app.height, fill = 'white')
+    drawLabel(f'{app.level} level sudoku!', app.width/2, 50, size=20, 
+              fill = 'midnightBlue')
+    drawLabel('press i for instructions!', app.width/2, 80, size=20, 
+              fill='cornflowerBlue', bold=True)
+    if app.hint1 == True:
+        for r, c in app.singletons:
+            drawCell(app, r, c, 'yellow')
+    
+    drawNums(app)
+    drawLegals(app)
+    drawUserInput(app) 
+    if app.redDot == True:
+        drawDot(app)
+    if app.clicked == True:
+        highlightCell(app, app.row, app.col, 'clicked')
+
+    drawBoard(app)
+    drawBoardBorder(app)
+    drawInnerBorder(app)
+    drawNumPad(app)
+    drawLabel("Numbers Left to Fill:", 1185, 275, size = 20)
+
+    drawLabel('Keyboard Shortcuts', 50, 445, size = 23, align = 'left',
+              bold = True)
+    drawLabel('Press b to go back!', 50, 470, size = 20, align = 'left',
+              fill = 'cornflowerBlue')
+    drawLabel('Press h to receive one hint on singletons', 
+              50, 490, size = 20, align = 'left',
+              fill = 'cornflowerBlue')
+    drawLabel('Press f to fill in one singleton at a time', 50, 510, 
+              size = 20, align = 'left',
+              fill = 'cornflowerBlue')
+    drawLabel('Press s to auto set all singletons shown!', 50, 530, 
+              size = 20, align = 'left',
+              fill = 'cornflowerBlue')
+    drawLabel('Press u to undo a move!', 50, 550, size = 20, align = 'left',
+              fill = 'cornflowerBlue')
+    drawLabel('Press r to redo a move!', 50, 570, size = 20, align = 'left',
+              fill = 'cornflowerBlue')
+
+    if app.noUndo == True:
+        drawLabel('No more undos!', 225, 250, size = 40, bold = True, 
+                  fill = 'blue')
+    if app.noRedo == True:
+        drawLabel('No more redos!', 225, 250, size = 40, bold = True, 
+                  fill = 'red')
+    if app.singletonMsg == True:
+        drawLabel('No singletons left', app.width/2, 650, size = 25, 
+                  bold = True, fill = 'blue')
+    if app.singletonLeft == True:
+        drawLabel('Here are the singletons left', app.width/2, 650, size = 25, 
+                  bold = True, fill = 'blue')
+    if app.complete == True:
+        drawLabel('Complete the available singletons', app.width/2, 675, 
+                  size = 25, bold = True, fill = 'blue')
+        
+    for r in range(app.rows):
+        for c in range(app.cols):
+            if app.sudoku.sudokuList[r][c] != app.sudoku.solutionBoard[r][c]:
+                return
+    drawRect(0, 0, app.width, app.height, fill = 'powderBlue')
+    drawLabel('GAME OVER', app.width/2, 200, size = 150, bold = True, 
+            fill = 'royalBlue')
+    drawLabel('YOU WON', app.width/2, 350, size = 150, bold = True, 
+            fill = 'royalBlue')
+    drawLabel('Press b to go back to the home screen', app.width/2, 460, 
+              size = 40, bold = True, fill = 'royalBlue')
+
+def drawDot(app): # use list app.incorrect to draw red dots
+    if app.redDot == True:
+        for row, col in app.incorrect:
+            cellLeft, cellTop = getCellLeftTop(app, row, col)
+            cellWidth, cellHeight = getCellSize(app)
+            drawCircle(cellLeft + cellWidth/2, cellTop + cellHeight/2, 
+                       cellHeight/3, fill = 'red', opacity = 50)
+
+def drawNumPad(app):
+    # https://www.nytimes.com/puzzles/sudoku visual and functional inspiration
+    for i in range(1, 10):
+        count = 0
+        for row in range(app.rows):
+            for col in range(app.cols):
+                if app.sudoku.sudokuList[row][col] == i:
+                    count += 1
+        if count == 9:
+            drawRect(1100 + (i-1)//3 * 60, 300 + (i-1)%3 * 60, 50, 50, 
+                     fill='lightSteelBlue')
+        else:
+            drawRect(1100 + (i-1)//3 * 60, 300 + (i-1)%3 * 60, 50, 50, 
+                     fill='dodgerBlue')
+        drawLabel(f'{i}', 1125 + (i-1)//3 * 60, 325 + (i-1)%3 * 60, 
+                  fill='white',size=32, bold = True)
+            
+def drawUserInput(app):
+    for row in range(app.rows):
+        for col in range(app.cols):
+            if app.userBoard[row][col] != None:
+                cellLeft, cellTop = getCellLeftTop(app, row, col)
+                cellWidth, cellHeight = getCellSize(app)
+                drawLabel(app.userBoard[row][col], cellLeft + cellWidth/2, 
+                              cellTop + cellHeight/2, size=32, 
+                              fill = 'royalBlue')
+
+def highlightCell(app, row, col, fillType):
+    if app.sudoku.sudokuList[row][col] == 0 or app.userBoard[row][col] != None:
+        if fillType == 'clicked':
+            color = 'skyBlue'
+        cellLeft, cellTop = getCellLeftTop(app, row, col)
+        cellWidth, cellHeight = getCellSize(app)
+        drawRect(cellLeft, cellTop, cellWidth, cellHeight, fill = color, 
+                 opacity = 50)
+
+def play_onMousePress(app, mouseX, mouseY):
+    for row in range(app.rows):
+        for col in range(app.cols):
+            cellLeft, cellTop = getCellLeftTop(app, row, col)
+            cellWidth, cellHeight = getCellSize(app)
+            if (cellLeft <= mouseX <= cellLeft + cellWidth 
+                and cellTop <= mouseY <= cellTop + cellHeight):
+                app.row, app.col = row, col
+                app.clicked = True
+
+def drawLegals(app):
+    for row in range(app.rows):
+        for col in range(app.cols):
+            if app.sudoku.sudokuList[row][col] == 0:
+                cellLeft, cellTop = getCellLeftTop(app, row, col)
+                cellWidth, cellHeight = getCellSize(app)
+                for i in range(1,10):
+                    if i in app.sudoku.legals[row][col]:
+                        drawLabel(f'{i}', 
+                                  cellLeft + (1+((i-1)%3)) * (cellWidth/4), 
+                                  cellTop + (1+((i-1)//3)) * (cellHeight/4), 
+                                  size=12, fill='midnightBlue')
+
+def drawNums(app): 
+    if app.sudoku.sudokuList != []:
+        for row in range(app.rows):
+            for col in range(app.cols):
+                num = app.sudoku.sudokuList[row][col]
+                cellLeft, cellTop = getCellLeftTop(app, row, col)
+                cellWidth, cellHeight = getCellSize(app)
+                if (num != 0 and 
+                    app.sudoku.sudokuList[row][col] != app.userBoard[row][col]):
+                    drawLabel(f'{num}', cellLeft + cellWidth/2, 
+                              cellTop + cellHeight/2, size=32, fill='black', 
+                              bold=True)
+
+def drawBoard(app):
+    # source: cs academy 5.3.2 Drawing a 2d Board 
+    # https://cs3-112-f22.academy.cs.cmu.edu/notes/4187
+    for row in range(app.rows):
+        for col in range(app.cols):
+            color = app.board[row][col]
+            drawCell(app, row, col, color)
+
+def drawBoardBorder(app): # draw the board outline (with double-thickness)
+  # source: cs academy 5.3.2 Drawing a 2d Board
+  # https://cs3-112-f22.academy.cs.cmu.edu/notes/4187
+  drawRect(app.boardLeft, app.boardTop, app.boardWidth, app.boardHeight,
+           fill=None, border='midnightBlue', borderWidth=3*app.cellBorderWidth)
+
+def drawInnerBorder(app):
+    # draw the inner borders, showing 9 3 by 3 boards
+    for row in range(app.rows):
+        for col in range(app.cols):
+            if row % 3 == 0 and col % 3 == 0:
+                cellLeft, cellTop = getCellLeftTop(app, row, col)
+                drawRect(cellLeft, cellTop, app.boardWidth/3, app.boardHeight/3,
+                fill=None, border='midnightBlue', 
+                borderWidth=1.75*app.cellBorderWidth)
+
+def drawCell(app, row, col, color): 
+    # source: cs academy 5.3.2 Drawing a 2d Board
+    # https://cs3-112-f22.academy.cs.cmu.edu/notes/4187 
+    cellLeft, cellTop = getCellLeftTop(app, row, col)
+    cellWidth, cellHeight = getCellSize(app)
+    if color == None: fill = None
+    else: fill = color
+    drawRect(cellLeft, cellTop, cellWidth, cellHeight,
+             fill=fill, border='midnightBlue',
+             borderWidth=app.cellBorderWidth)
+
+def getCellLeftTop(app, row, col):
+    # source: cs academy 5.3.2 Drawing a 2d Board
+    # https://cs3-112-f22.academy.cs.cmu.edu/notes/4187
+    cellWidth, cellHeight = getCellSize(app)
+    cellLeft = app.boardLeft + col * cellWidth
+    cellTop = app.boardTop + row * cellHeight
+    return (cellLeft, cellTop)
+
+def getCellSize(app):
+    # source: cs academy 5.3.2 Drawing a 2d Board
+    # https://cs3-112-f22.academy.cs.cmu.edu/notes/4187
+    cellWidth = app.boardWidth / app.cols
+    cellHeight = app.boardHeight / app.rows
+    return (cellWidth, cellHeight)
+
+#######################
+# INSTRUCTIONS SCREEN #
+#######################
+
+def instructions_onKeyPress(app, key):
+    if key == 'b':
+        if app.selected == True: setActiveScreen('play')
+        else:
+            setActiveScreen('splash')
+        
+def instructions_redrawAll(app):
+    drawRect(0, 0, app.width, app.height, fill='white')
+    drawLabel('instructions', app.width/2, 150, size=175, bold=True, 
+              fill='lightSteelBlue')
+    
+    drawLabel('Fill in all 3 by 3 boards with the numbers 1 - 9', 
+              205, 250, size=23, align = 'left')
+    drawLabel('Press a cell to select it and type in a number to ' + 
+              'enter it in the board', 205, 280, size=23, align = 'left')
+    drawLabel('Each row, column, and 3 by 3 board must contain one of ' +
+              'each number from 1 to 9', 205, 310, size=23, align = 'left')
+    
+    drawLabel('If the number in the cell does not match the solution, ' + 
+              'a red dot will appear', 205, 380, size=23, align = 'left')
+    drawLabel('The number pad on the right will show what numbers still ' +
+              'need to be filled:', 205, 410, size=23, align = 'left')
+    drawLabel('The gray number boxes are already filled whereas the colored ' +
+              'number boxes are not ', 205, 440, size=23, align = 'left')
+    drawLabel('After receiving a hint, you may either manually set the value ' +
+              'or automatically set it with the "f" key', 205, 470, size=23, 
+              align = 'left')
+    
+    drawLabel('Keyboard Shortcuts', 205, 545, size = 23, align = 'left',
+              bold = True)
+    drawLabel('Press b to go back!', 205, 570, size = 20, align = 'left',
+              fill = 'cornflowerBlue')
+    drawLabel('Press h to receive one hint on singletons (cells with only one' + 
+              ' value)!', 205, 590, size = 20, align = 'left',
+              fill = 'cornflowerBlue')
+    drawLabel('Press f to fill in one singleton at a time', 205, 610, 
+              size = 20, align = 'left',
+              fill = 'cornflowerBlue')
+    drawLabel('Press s to automatically set all singletons shown!', 205, 630, 
+              size = 20, align = 'left',
+              fill = 'cornflowerBlue')
+    drawLabel('Press u to undo a move!', 205, 650, size = 20, align = 'left',
+              fill = 'cornflowerBlue')
+    drawLabel('Press r to redo a move!', 205, 670, size = 20, align = 'left',
+              fill = 'cornflowerBlue')
+
+def main():
+    runAppWithScreens(initialScreen='splash', width=1400, height=700)
+
+main()
